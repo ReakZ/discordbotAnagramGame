@@ -14,3 +14,17 @@ function RandChar(str){
     }
     return result
 }
+function compare(a, b) {
+    if (a.score < b.score) {
+      return 1;
+    }
+    if (a.score > b.score) {
+      return -1;
+    }
+    
+    return 0;
+  }
+
+module.exports.randomNumber=randomNumber
+module.exports.RandChar=RandChar
+module.exports.compare=compare

@@ -1,14 +1,17 @@
 const Discord = require("discord.js");
 const bot = new Discord.Client();
+
 const db = require("mongoose");
 const baseUsers = require("./baseUsers.js");
 const questions = require("./questions.js");
 
-let config = require("./botconfig.json");
-let commands = require("./commands.json");
+const utils=require("./utils")
+const local=require("./localisation.js")
+const config = require("./botconfig.json");
+const commands = require("./commands.json");
 
-let token = config.token;
-let prefix = config.prefix;
+const token = config.token;
+const prefix = config.prefix;
 const dburl = config.mongo;
 //создаём ссылку-приглашение для бота
 
@@ -16,32 +19,28 @@ let Round = {
   question: "???",
   answer: "***",
   isStart: false,
+  tip:null,
+  tipPoints:0,
+  points:0
 };
-
-function randomNumber(min, max) {
-  return Math.floor(Math.random() * (max - min + 1) + min);
-}
-
-function RandChar(str) {
-  let massiv = str.split("");
-  let result = [];
-  for (let a = 0; a < massiv.length; a++) {
-    let i = randomNumber(0, massiv.length);
-    while (result[i] !== undefined) {
-      i = randomNumber(0, massiv.length);
-    }
-    result[i] = massiv[a];
-  }
-  return result;
-}
 
 async function newRound() {
   let counQustions = await questions.count({});
-  let idQustion = randomNumber(1, counQustions);
+  let idQustion = utils.randomNumber(1, counQustions);
   let quest = await questions.findOne({ id: idQustion });
   Round.answer = quest.question;
-  Round.question = await RandChar(Round.answer).join("");
+  Round.points=quest.question.length
+  Round.question = await utils.RandChar(Round.answer).join("");
   Round.isStart = true;
+  Round.tipPoints=0
+  Round.tip=null
+  console.log(Round.answer,Round.points)
+}
+
+function getTip(){
+    Round.points-=1
+    Round.tipPoints+=1
+    Round.tip=Round.answer.slice(0,Round.tipPoints)
 }
 
 bot.on("ready", () => {
@@ -58,54 +57,62 @@ bot.on("ready", () => {
 });
 
 bot.on("message", async (msg) => {
-  if (msg.content === prefix + "инфо") {
+  if (msg.content.toLowerCase() === prefix + local.info) {
     msg.reply(commands.info);
   }
-  if (msg.content === prefix + "таблица") {
-    let users = await baseUsers.find({});
-    msg.reply(users);
-  }
-  if (msg.content === prefix + "старт") {
+  if (msg.content.toLowerCase() === prefix + local.start) {
     if (Round.isStart) {
-      msg.reply(`Игра уже начата! Слово для разгадывания: ${Round.question}`);
+      msg.channel.send(`Игра уже начата! \n Слово для разгадывания: ${Round.question} ${Round.tip?`Подсказка: ${Round.tip}`:""}`);
     } else {
       await newRound();
-      msg.channel.send(`Слово для разгадывания: ${Round.question}`);
+      msg.channel.send(`Слово для разгадывания: ${Round.question} ${Round.tip?`Подсказка: ${Round.tip}`:""}`);
     }
   }
 
-  if (msg.content === prefix + "счет") {
+  if (msg.content.toLowerCase() === prefix + local.score) {
     let currentUser = await baseUsers.findOne({ userId: msg.author.id });
-
-    if (currentUser) msg.reply(`Твой счет: ${currentUser.score}`);
+    if (currentUser) msg.reply(`У вас ${currentUser.score} очков`);
     else {
-      msg.reply(`Ты еще не играл`);
+      msg.reply(`Вы еще не играли`);
     }
   }
 
-  if (msg.content === prefix + "лидеры") {
+  if (msg.content.toLowerCase() === prefix + local.leadears) {
     let list = await baseUsers.find({});
-    let formated = list.map(
-      (x) => `* ${x.userName} - Кол.во очков:${x.score}\n`
+    let formated = list.sort(utils.compare).slice(0,3).map(
+      (x,i) => `${i+1}. ${x.userName} - ${x.score} очков`
     );
-    msg.channel.send(["Таблица очков:", ...formated]);
+    msg.channel.send(["Лидеры:", ...formated]);
   }
 
-  if (Round.isStart && msg.content.trim() === Round.answer) {
+
+  if (Round.isStart && msg.content.toLowerCase() === prefix + local.tip) {
+    if(Round.points>1){
+      getTip()
+    }
+    
+    else{
+      msg.reply('Использованы все подсказки');
+    }
+    msg.channel.send(`Подсказка:${Round.tip}`);
+  }
+
+
+  if (Round.isStart && msg.content.toLowerCase().trim() === Round.answer) {
+    let userWinner
     try {
-      let userWinner = await baseUsers.findOne({ userId: msg.author.id });
+      userWinner = await baseUsers.findOne({ userId: msg.author.id });
     } catch (e) {
       console.log(e);
     }
 
     if (userWinner) {
-      let userScore = userWinner.score + 1;
-
+      let userScore = userWinner.score + Round.points;
       await baseUsers.findOneAndUpdate(
         { userId: msg.author.id },
         { $set: { score: userScore } }
       );
-      msg.reply("Вы дали правильный ответ !");
+      msg.reply(`Вы дали правильный ответ ! Вы получаете ${Round.points} очков.`);
       Round.isStart = false;
       await newRound();
       msg.channel.send(`Слово для разгадывания: ${Round.question}`);
@@ -113,9 +120,13 @@ bot.on("message", async (msg) => {
       let newUser = new baseUsers({
         userId: msg.author.id,
         userName: msg.author.username,
-        score: 1,
+        score: Round.points,
       });
-      newUser.save().then((x) => msg.reply("Добро пожалoвать в игру"));
+      await newUser.save()
+      msg.reply(`Добро пожалoвать в игру ! Вы получатаете ${Round.points} очков.`)
+      Round.isStart = false;
+      await newRound();
+      msg.channel.send(`Слово для разгадывания: ${Round.question}`);
     }
   }
 });
